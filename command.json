@@ -1,0 +1,7 @@
+{
+  "name": "summarize",
+  "description": "Summarize the last 24h of a channel",
+  "options": [
+    { "type": 3, "name": "channel", "description": "Channel name", "required": false }
+  ]
+}

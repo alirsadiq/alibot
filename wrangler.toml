@@ -1,0 +1,10 @@
+name = "bot"
+main = "index.ts"
+compatibility_date = "2025-10-22"
+
+[vars]
+GUILD_ID = "1038487914675437659"
+DEFAULT_CHANNEL = "dreams"
+
+[triggers]
+crons = ["0 14 * * *"]  # runs daily 2 PM UTC
