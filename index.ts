@@ -1,3 +1,4 @@
+
 import { InteractionType, InteractionResponseType } from 'discord-interactions';
 import {
   APIMessage,
@@ -17,91 +18,7 @@ interface Env {
   OPENAI_API_KEY: string;
   DB: D1Database;
 }
-// ---------- Normalizer ----------
-type NormalizedMsg = {
-  author_username: string;
-  content: string;     // compact textual summary of the message
-  timestamp: string;
-  reactions?: Array<{ emoji_name: string; count: number }>;
-};
 
-function normalizeDiscordMessage(msg: any): NormalizedMsg {
-  const bits: string[] = [];
-
-  // 1) text content
-  if (typeof msg.content === "string" && msg.content.trim()) {
-    bits.push(msg.content.trim());
-  }
-
-  // 2) reply context
-  if (msg.referenced_message) {
-    const rm = msg.referenced_message;
-    const refAuthor = rm?.author?.username || "someone";
-    const refText =
-      typeof rm?.content === "string" && rm.content.trim()
-        ? rm.content.trim().slice(0, 120)
-        : (Array.isArray(rm?.attachments) && rm.attachments.length
-            ? `[attachments:${rm.attachments.length}]`
-            : (Array.isArray(rm?.embeds) && rm.embeds.length
-                ? `[embeds:${rm.embeds.length}]`
-                : "(non-text)"));
-    bits.push(`[reply → *${refAuthor}*: ${refText}]`);
-  }
-
-  // 3) attachments (images/files)
-  if (Array.isArray(msg.attachments) && msg.attachments.length) {
-    const att = msg.attachments
-      .slice(0, 3)
-      .map((a: any) => a.filename || (a.url?.split("/").pop() ?? "file"))
-      .join(", ");
-    bits.push(`[attachments: ${att}]`);
-  }
-
-  // 4) embeds (Tenor GIFs, link previews)
-  if (Array.isArray(msg.embeds) && msg.embeds.length) {
-    const titles = msg.embeds
-      .map((e: any) => e.title || e.description || e.url)
-      .filter(Boolean)
-      .slice(0, 2);
-    if (titles.length) bits.push(`[embeds: ${titles.join(" | ")}]`);
-  }
-
-  // 5) stickers
-  const stickers = Array.isArray(msg.sticker_items) ? msg.sticker_items
-                  : Array.isArray(msg.stickers) ? msg.stickers : [];
-  if (stickers.length) {
-    bits.push(`[stickers: ${stickers.map((s: any) => s.name).join(", ")}]`);
-  }
-
-  // 6) reactions
-  if (Array.isArray(msg.reactions) && msg.reactions.length) {
-    const reacts = msg.reactions
-      .map((r: any) => {
-        const n = r.count ?? 0;
-        const name = r.emoji?.id
-          ? `<:${r.emoji?.name}:${r.emoji?.id}>`
-          : (r.emoji?.name ?? "emoji");
-        return `${name}×${n}`;
-      })
-      .join(" ");
-    bits.push(`[reactions: ${reacts}]`);
-  }
-
-  if (bits.length === 0) bits.push("(non-text post)");
-
-  return {
-    author_username: msg.author?.username ?? "unknown",
-    content: bits.join(" · "),
-    timestamp: msg.timestamp,
-    reactions: Array.isArray(msg.reactions)
-      ? msg.reactions.map((r: any) => ({
-          emoji_name: r.emoji?.name ?? "emoji",
-          count: r.count ?? 0,
-        }))
-      : undefined,
-  };
-}
-// ---------- /Normalizer ----------
 // Use Discord API types from the official package
 type DiscordMessage = APIMessage;
 type DiscordChannel = APIChannel;
@@ -171,11 +88,11 @@ export default {
 
       if (send === '1') {
         try {
-          await sendSummaryToChannel(summaryResult.summary, '', env);
+          await sendSummaryToChannel(summaryResult.summary, 'alibot', env);
           return new Response(JSON.stringify({
             channel: channelName,
             summary: summaryResult.summary,
-            sent_to: '',
+            sent_to: 'alibot',
             timestamp: new Date().toISOString(),
             oldestMessageTimestamp: summaryResult.oldestMessageTimestamp,
             newestMessageTimestamp: summaryResult.newestMessageTimestamp,
@@ -225,13 +142,9 @@ async function handleDiscordInteraction(request: Request, env: Env): Promise<Res
     const body = await request.json() as any; // Use any for now to handle type conflicts
 
     if (body.type === InteractionType.PING) {
-      console.log('are we here')
-const resp =  new Response('{"type":1}', {
-  status: 200,
-  headers: { "Content-Type": "application/json" }
-});
-console.log(resp)
-return resp;
+      return new Response(JSON.stringify({ type: InteractionResponseType.PONG }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
     if (body.type === InteractionType.APPLICATION_COMMAND) {
@@ -259,9 +172,9 @@ return resp;
 
 async function handleScheduledSummary(env: Env): Promise<void> {
   try {
-    const defaultChannel = env.DEFAULT_CHANNEL || 'dreams';
+    const defaultChannel = env.DEFAULT_CHANNEL || 'general';
     const summaryResult = await generateChannelSummary(defaultChannel, env);
-    await sendSummaryToChannel(summaryResult.summary, 'aliboy', env);
+    await sendSummaryToChannel(summaryResult.summary, 'alibot', env);
   } catch (error) {
     console.error('Error in scheduled summary:', error);
   }
@@ -321,7 +234,8 @@ async function fetchChannelMessages(channelName: string, env: Env): Promise<Disc
   
   // Validate Discord token format
   if (!env.DISCORD_TOKEN) {
-    throw new Error("Missing DISCORD_TOKEN");
+    console.error(`[FETCH] Invalid Discord token format`);
+    throw new Error(`Invalid Discord token format`);
   }
   
   const channelId = await getChannelId(channelName, env);
@@ -377,11 +291,13 @@ async function fetchChannelMessages(channelName: string, env: Env): Promise<Disc
       break; // No more messages
     }
 
-// keep last 24h & ignore bot authors
-const recentMessages = messages.filter(m => {
-  const ts = new Date(m.timestamp);
-  return ts >= yesterday && !m.author?.bot;
-});
+    // Filter messages from the last 24 hours and non-bot messages
+    const recentMessages = messages.filter(message => {
+      const messageDate = new Date(message.timestamp);
+      const isRecent = messageDate >= yesterday;
+      const isNotBot = !message.author.bot;
+      return isRecent && isNotBot;
+    });
 
     // If we find messages older than 24 hours, we can stop
     const oldMessages = messages.filter(message => {
@@ -763,11 +679,11 @@ async function generateSummary(finalMessages: MessageWithImages[], env: Env): Pr
   }).join('\n');
   
 
-  // Use a more structured prompt that Ollama will follow better
-  let summaryPrompt = `ROLE: You are a witty Discord channel summarizer for a car enthusiast group.
+  let summaryPrompt = `ROLE: You are a witty Discord channel summarizer for a group of friends who like gaming and anime but also hate the super cringe aspects of it, keep a cool guy tone but sprinkle the occasional shonen pizzaz but very occasional.
 
-TASK: Create a quick summary recap to your anime loving bros, add a hint of islamic banter, not boardroom briefing.
-Use a humorous, light-hearted tone. Casual "bro" style - be cheeky but friendly.
+
+TASK: Create a quick summary recap to your anime loving bros, add a hint of islamic banter like words like inshallah and astaghfirullah when and only if comedic timing allows, not boardroom briefing.
+Use a humorous, light-hearted tone. Casual "bro" style - be cheeky but friendly, don't be afraid to sometimes lean in on the cheekiness when needed, you can poke fun but in a brotherly fun.
 Only focus on key highlights and funny moments. You can use a brief introduction, up to five bullets, and any closing witty joke. Don't need to mention every single message or detail.
 Use markdown, and *italicize usernames*.
 Don't mention requirements or instructions in the summary. Just respond with your recap directly.
@@ -781,7 +697,7 @@ console.log('[AI_SUMMARY] Summary prompt length:', summaryPrompt.length);
   console.log('[AI_SUMMARY] Summary prompt preview:', summaryPrompt);
   
   const summaryRequestBody = {
-    model: "gpt-4o-mini",
+    model: "gpt-4.1-mini",
     messages: [
       {
         role: "user",
@@ -791,13 +707,10 @@ console.log('[AI_SUMMARY] Summary prompt length:', summaryPrompt.length);
     max_tokens: 500,
     temperature: 0.7
   };
-  console.log('am I here')
+
   console.log(`[AI_SUMMARY] Sending summary request to OpenAI`);
   console.log(`[AI_SUMMARY] Request payload size: ${JSON.stringify(summaryRequestBody).length} characters`);
-  const res = await fetch("https://api.openai.com/v1/models", {
-    headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}` },
-  });
-  console.log(await res.text());
+  
   const summaryResponse = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
